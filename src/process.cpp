@@ -15,7 +15,7 @@ namespace yet_another_process_library
 	bool is_set(T in, T flag)
 	{
 		return (in & flag) != 0;
-	};
+	}
 	
 	template<typename Policy>
 	class unique_handle
