@@ -4,8 +4,8 @@ project(yet_another_process_library)
 find_package(Boost 1.54 COMPONENTS system filesystem REQUIRED)
 find_package(Threads)
 
-file(GLOB_RECURSE INCLUDES "${CMAKE_SOURCE_DIR}/include/*.hpp")
-file(GLOB SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+file(GLOB_RECURSE INCLUDES "include/*.hpp")
+file(GLOB SOURCES "src/*.cpp")
 
 set(SOURCE_FILES
 	${INCLUDES}
@@ -29,5 +29,6 @@ foreach(sample ${EXAMPLE_FILES})
 	get_filename_component(sample_we ${sample} NAME_WE)
 	add_executable(${sample_we} ${sample})
 	set_property(TARGET ${sample_we} PROPERTY CXX_STANDARD 14)
-	target_link_libraries(${sample_we} gdbplz Threads::Threads ${Boost_LIBRARIES})
+	target_link_libraries(${sample_we} yet_another_process_library Threads::Threads ${Boost_LIBRARIES})
+	target_include_directories(${sample_we} PUBLIC include)
 endforeach()

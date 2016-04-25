@@ -1,15 +1,20 @@
 #include <type_traits>
 #include <thread>
 #include <mutex>
+#include <exception>
 #include <iterator>
 #include <yet_another_process_library/process.hpp>
+
+#define STRINGIFY1(x) #x
+#define STRINGIFY2(x) STRINGIFY1(x)
+#define LINESTR STRINGIFY2(__LINE__)
 
 namespace yet_another_process_library
 {
 	template<typename T>
 	bool is_set(T in, T flag)
 	{
-		return (in | flag) != 0;
+		return (in & flag) != 0;
 	};
 	
 	template<typename Policy>
@@ -36,8 +41,10 @@ namespace yet_another_process_library
 		{
 			typename Policy::handle_type old_handle = h;
 			h = new_handle;
-			if(Policy::is_null(old_handle))
+			if(!Policy::is_null(old_handle))
+			{
 				Policy::close(old_handle);
+			}
 		}
 		
 		void swap(unique_handle& other)
@@ -81,6 +88,16 @@ namespace yet_another_process_library
 	void process::kill()
 	{
 		kill(process::ask);
+	}
+	
+	process::process(
+		boost::filesystem::path executable_file,
+		std::function<void(boost::string_ref)> stdout_handler,
+		std::function<void(boost::string_ref)> stderr_handler,
+		const flags fl) :
+		process(executable_file, std::vector<std::string>(), stdout_handler, stderr_handler, fl)
+	{
+		
 	}
 }
 
@@ -192,13 +209,13 @@ namespace yet_another_process_library
 	
 	struct pipe
 	{
-		unique_handle<unix_fd_handle_policy> consumer;
 		unique_handle<unix_fd_handle_policy> producer;
+		unique_handle<unix_fd_handle_policy> consumer;
 		
 		void reset()
 		{
-			consumer.reset();
 			producer.reset();
+			consumer.reset();
 		}
 	};
 	
@@ -209,19 +226,21 @@ namespace yet_another_process_library
 			throw "FUCK";
 		
 		pipe p;
-		p.consumer = unique_handle<unix_fd_handle_policy>(rawp[0]);
-		p.producer = unique_handle<unix_fd_handle_policy>(rawp[1]);
+		p.producer = unique_handle<unix_fd_handle_policy>(rawp[0]);
+		p.consumer = unique_handle<unix_fd_handle_policy>(rawp[1]);
 		return p;
 	}
 	
 	struct process::impl
 	{
+		std::mutex stdin_mutex;
+		std::thread stdout_reader;
+		std::thread stderr_reader;
 		unique_handle<unix_fd_handle_policy> process_handle;
 		unique_handle<unix_fd_handle_policy> stdin_fd;
 		unique_handle<unix_fd_handle_policy> stdout_fd;
 		unique_handle<unix_fd_handle_policy> stderr_fd;
-		std::mutex stdin_mutex;
-		int exit_status;
+		int exit_status = -1;
 	};
 	
 	process::process(
@@ -260,9 +279,21 @@ namespace yet_another_process_library
 		
 		if(pid == 0)
 		{
-			if(open_stdin) dup2(stdin_pipe.consumer.get(), 0);
-			if(stdout_handler) dup2(stdout_pipe.producer.get(), 1);
-			if(stderr_handler) dup2(stdout_pipe.producer.get(), 2);
+			if(open_stdin)
+			{
+				dup2(stdin_pipe.producer.get(), 0);
+				stdin_pipe.consumer.reset();
+			}
+			if(stdout_handler)
+			{
+				dup2(stdout_pipe.consumer.get(), 1);
+				stdout_pipe.producer.reset();
+			}
+			if(stderr_handler)
+			{
+				dup2(stderr_pipe.consumer.get(), 2);
+				stderr_pipe.producer.reset();
+			}
 			
 			auto close_parent_fds_above = [](int fd)
 			{
@@ -285,36 +316,76 @@ namespace yet_another_process_library
 			};
 			before_exec();
 			
-			std::string arg0 = "";
+			std::string arg0 = executable_file.stem().native();
 			std::vector<char*> raw_args;
-			raw_args.reserve(arguments.size());
+			raw_args.reserve(arguments.size()+2);
 			raw_args.push_back(&arg0[0]);
 			std::transform(arguments.begin(), arguments.end(), std::back_inserter(raw_args), [](std::string& s)
 			{
 				return &s[0];
 			});
 			raw_args.push_back(nullptr);
-			::execv(executable_file.string().c_str(), raw_args.data());
+			if(is_set(fl, search_path_env))
+			{
+				::execvp(executable_file.native().c_str(), raw_args.data());
+			}
+			else
+			{
+				::execv(executable_file.native().c_str(), raw_args.data());
+			}
+			_exit(EXIT_FAILURE);
 		}
 		
-		stdin_pipe.consumer.reset();
-		stdout_pipe.producer.reset();
-		stderr_pipe.producer.reset();
+		stdin_pipe.producer.reset();
+		stdout_pipe.consumer.reset();
+		stderr_pipe.consumer.reset();
 		
 		i.reset(new impl());
-		i->stdin_fd = std::move(stdin_pipe.producer);
-		i->stdout_fd = std::move(stdout_pipe.consumer);
-		i->stderr_fd = std::move(stderr_pipe.consumer);
+		i->stdin_fd = std::move(stdin_pipe.consumer);
+		i->stdout_fd = std::move(stdout_pipe.producer);
+		i->stderr_fd = std::move(stderr_pipe.producer);
 		i->process_handle.reset(pid);
+		
+		auto reader = [](std::function<void(boost::string_ref)> reader, int fd)
+		{
+			std::vector<char> buffer(4096);
+			ssize_t n;
+			while(true)
+			{
+				n = read(fd, buffer.data(), buffer.size());
+				if(n <= 0)
+					break;
+				reader(boost::string_ref(buffer.data(), static_cast<size_t>(n)));
+			}
+		};
+		if(stdout_handler)
+			i->stdout_reader = std::thread(reader, stdout_handler, i->stdout_fd.get());
+		if(stderr_handler)
+			i->stderr_reader = std::thread(reader, stderr_handler, i->stderr_fd.get());
 	}
 	
-	void process::write(boost::string_ref input)
+	void process::close_stdin()
 	{
-		if(!i)
-			return;
-		
 		std::lock_guard<std::mutex> lock(i->stdin_mutex);
-		
+		i->stdin_fd.reset();
+	}
+	
+	bool process::write(boost::string_ref input)
+	{
+		std::lock_guard<std::mutex> lock(i->stdin_mutex);
+		const int res = ::write(i->stdin_fd.get(), input.data(), input.size());
+		if(res < 0)
+		{
+			perror(LINESTR);
+			const int err = errno;
+			if(err == EBADF)
+				throw pipe_closed("stdin is closed");
+			return false;
+		}
+		else if(res == 0)
+			return false;
+		else
+			return true;
 	}
 	
 	void process::suspend()
@@ -329,20 +400,27 @@ namespace yet_another_process_library
 	
 	bool process::is_finished()
 	{
-		if(::kill(native_handle(), 0) == -1)
+		int exitcode = -1;
+		const int res = ::waitpid(native_handle(), &exitcode, WNOHANG);
+		if(res > 0)
 		{
-			const int err = errno;
-			assert(err == ESRCH);
+			i->exit_status = exitcode;
 			return true;
 		}
-		return false;
+		else if(res == 0)
+		{
+			return false;
+		}
+		else
+		{
+			return true;
+		}
 	}
 	
 	boost::optional<int> process::get_exit_status()
 	{
 		if(is_finished())
 		{
-			wait();
 			return i->exit_status;
 		}
 		return boost::none;
@@ -359,6 +437,9 @@ namespace yet_another_process_library
 	void process::wait()
 	{
 		waitpid(native_handle(), &i->exit_status, 0);
+		i->stdin_fd.reset();
+		i->stdout_fd.reset();
+		i->stderr_fd.reset();
 	}
 	
 	process::native_handle_type process::native_handle()
@@ -366,6 +447,18 @@ namespace yet_another_process_library
 		return i->process_handle.get();
 	}
 	
+	process::~process()
+	{
+		if(!is_finished())
+			std::terminate();
+		if(i->stdout_reader.joinable())
+			i->stdout_reader.join();
+		if(i->stderr_reader.joinable())
+			i->stderr_reader.join();
+	}
+	
+	process::process(process&&) = default;
+	process& process::operator=(process&&) = default;
 }
 
 #endif

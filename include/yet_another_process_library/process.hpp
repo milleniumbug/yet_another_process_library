@@ -11,17 +11,28 @@
 
 namespace yet_another_process_library
 {
+	struct waiting_on_sleeping_process_error : public std::runtime_error
+	{
+		waiting_on_sleeping_process_error(const char* what) : std::runtime_error(what) {}
+		waiting_on_sleeping_process_error(const std::string& what) : std::runtime_error(what) {}
+	};
+	
+	struct pipe_closed : public std::runtime_error
+	{
+		pipe_closed(const char* what) : std::runtime_error(what) {}
+		pipe_closed(const std::string& what) : std::runtime_error(what) {}
+	};
+	
 	class process
 	{
 	private:
 		struct impl;
 		std::unique_ptr<impl> i;
 	public:
-		enum flags : unsigned long long
-		{
-			suspended = (1 << 0),
-			stdin_closed = (1 << 1)
-		};
+		typedef unsigned long long flags;
+		static const flags suspended = (1ULL << 0);
+		static const flags stdin_closed = (1ULL << 1);
+		static const flags search_path_env = (1ULL << 2);
 		
 		enum kill_brutality : unsigned int
 		{
@@ -33,6 +44,12 @@ namespace yet_another_process_library
 #else
 		typedef int native_handle_type;
 #endif
+		
+		process(
+			boost::filesystem::path executable_file,
+			std::function<void(boost::string_ref)> stdout_handler = nullptr,
+			std::function<void(boost::string_ref)> stderr_handler = nullptr,
+			flags fl = static_cast<flags>(0));
 		
 		process(
 			boost::filesystem::path executable_file,
@@ -48,7 +65,8 @@ namespace yet_another_process_library
 			std::function<void(boost::string_ref)> stderr_handler = nullptr,
 			flags fl = static_cast<flags>(0));
 		
-		void write(boost::string_ref input);
+		void close_stdin();
+		bool write(boost::string_ref input);
 		void suspend();
 		void resume();
 		bool is_finished();
@@ -57,6 +75,12 @@ namespace yet_another_process_library
 		void kill();
 		void wait();
 		native_handle_type native_handle();
+		
+		~process();
+		process(process&&);
+		process& operator=(process&&);
+		process(const process&) = delete;
+		process& operator=(const process&) = delete;
 	};
 }
 
