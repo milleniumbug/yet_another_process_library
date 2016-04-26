@@ -5,8 +5,13 @@
 
 int main()
 {
-	using namespace yet_another_process_library;
-	process p("sleep", make_ascii_args({ "1" }), nullptr, nullptr, process::stdin_closed | process::search_path_env);
+	namespace yapl = yet_another_process_library;
+	yapl::process p(
+		"sleep",
+		yapl::make_ascii_args({ "1" }),
+		nullptr,
+		nullptr,
+		yapl::process::stdin_closed | yapl::process::search_path_env);
 	std::this_thread::sleep_for(std::chrono::milliseconds(15));
 	assert(p.get_exit_status() == boost::none);
 	std::this_thread::sleep_for(std::chrono::seconds(2));

@@ -6,13 +6,13 @@
 
 int main()
 {
-	using namespace yet_another_process_library;
+	namespace yapl = yet_another_process_library;
 	std::stringstream ss;
-	process p("bash", make_native_args({}), [&](boost::string_ref s)
+	yapl::process p("bash", yapl::make_native_args({}), [&](boost::string_ref s)
 	{
 		ss << s;
 		ss.flush();
-	}, nullptr, process::search_path_env);
+	}, nullptr, yapl::process::search_path_env);
 	p.write("echo Hello world\n");
 	p.write("exit\n");
 	p.wait();

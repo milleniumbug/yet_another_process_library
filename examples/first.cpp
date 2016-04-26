@@ -3,10 +3,10 @@
 
 int main()
 {
-	using namespace yet_another_process_library;
-	process p("which", make_ascii_args({ "gdb" }), [](boost::string_ref s)
+	namespace yapl = yet_another_process_library;
+	yapl::process p("which", yapl::make_ascii_args({ "gdb" }), [](boost::string_ref s)
 	{
 		std::cout << s << "\n";
-	}, nullptr, process::stdin_closed | process::search_path_env);
+	}, nullptr, yapl::process::stdin_closed | yapl::process::search_path_env);
 	p.wait();
 }
