@@ -1,5 +1,3 @@
-#ifdef _WIN32
-
 #include <iostream>
 #include <thread>
 #include <cassert>
@@ -35,6 +33,7 @@ and a quote "%ENDOFARGUMENT%
 	std::cout << actual;
 }
 
+#ifdef _WIN32
 #include <windows.h>
 
 boost::filesystem::path get_current_process_path()
@@ -52,15 +51,31 @@ boost::filesystem::path get_current_process_path()
 	return boost::filesystem::path(w);
 }
 
-
 boost::filesystem::path program_component()
 {
 	return L"_arg_tester.exe";
 }
 
 #else
-int main()
+#include <unistd.h>
+
+boost::filesystem::path get_current_process_path()
 {
-	
+	std::string w;
+	w.resize(1024);
+    auto size = readlink("/proc/self/exe", &w[0], w.size());
+    if(size == 0 || size == w.size())
+    {
+    	// assuming the path is less than 1024 chars
+    	// and the function doesn't fail
+        assert(false);
+    }
+	w.resize(size);
+	return boost::filesystem::path(w);
+}
+
+boost::filesystem::path program_component()
+{
+	return "_arg_tester";	
 }
 #endif
