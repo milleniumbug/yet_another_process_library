@@ -3,6 +3,7 @@
 #include <mutex>
 #include <exception>
 #include <iterator>
+#include <numeric>
 #include <yet_another_process_library/process.hpp>
 
 #define STRINGIFY1(x) #x
@@ -125,6 +126,7 @@ namespace yet_another_process_library
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <TlHelp32.h>
 static_assert(std::is_same<yet_another_process_library::process::native_handle_type, HANDLE>::value, "invalid assumption about native type");
 
 namespace yet_another_process_library
@@ -139,20 +141,57 @@ namespace yet_another_process_library
 		
 		static handle_type get_null()
 		{
-			return INVALID_HANDLE_VALUE;
+			return nullptr;
 		}
 		
 		static bool is_null(handle_type handle)
 		{
-			return handle == INVALID_HANDLE_VALUE;
+			return handle || handle == INVALID_HANDLE_VALUE;
 		}
 	};
 	
+	struct pipe
+	{
+		unique_handle<windows_process_handle_policy> producer;
+		unique_handle<windows_process_handle_policy> consumer;
+		
+		void reset()
+		{
+			producer.reset();
+			consumer.reset();
+		}
+	};
+	
+	pipe create_pipe()
+	{
+		SECURITY_ATTRIBUTES security_attributes;
+		security_attributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+		security_attributes.bInheritHandle = TRUE;
+		security_attributes.lpSecurityDescriptor = NULL;
+		
+		HANDLE rawp[2];
+		if(!CreatePipe(&rawp[0], &rawp[1], &security_attributes, 0))
+			throw "FUCK";
+		
+		pipe p;
+		p.producer = unique_handle<windows_process_handle_policy>(rawp[0]);
+		p.consumer = unique_handle<windows_process_handle_policy>(rawp[1]);
+		return p;
+	}
+	
+	void mark_inherited(unique_handle<windows_process_handle_policy>& handle)
+	{
+		if(!SetHandleInformation(handle.get(), HANDLE_FLAG_INHERIT, 0))
+			throw "FUCK";
+	}
+	
 	struct process::impl
 	{
+		std::mutex close_mutex;
 		std::mutex stdin_mutex;
 		std::thread stdout_reader;
 		std::thread stderr_reader;
+		DWORD process_id;
 		unique_handle<windows_process_handle_policy> process_handle;
 		unique_handle<windows_process_handle_policy> stdin_fd;
 		unique_handle<windows_process_handle_policy> stdout_fd;
@@ -163,51 +202,172 @@ namespace yet_another_process_library
 	process::process(
 		boost::filesystem::path executable_file,
 		native_args wrapped_arguments,
-		std::function<void(boost::string_ref)> stdout_handler,
-		std::function<void(boost::string_ref)> stderr_handler,
+		boost::variant<stdout, stream_consumer> stdout_handler,
+		boost::variant<stderr, stream_consumer> stderr_handler,
 		const flags fl)
 	{
+		pipe stdin_pipe;
+		pipe stdout_pipe;
+		pipe stderr_pipe;
 		
+		const bool open_stdin = !is_set(fl, stdin_closed);
+		const bool open_stdout = stdout_handler.which() != 0;
+		const bool open_stderr = stderr_handler.which() != 0;
+		
+		if(open_stdin)
+		{
+			stdin_pipe = create_pipe();
+			mark_inherited(stdin_pipe.consumer);
+		}
+		if(open_stdout)
+		{
+			stdout_pipe = create_pipe();
+			mark_inherited(stdout_pipe.producer);
+		}
+		if(open_stderr)
+		{
+			stderr_pipe = create_pipe();
+			mark_inherited(stderr_pipe.producer);
+		}
+		
+		PROCESS_INFORMATION process_info;
+		STARTUPINFOW startup_info;
+		memset(&process_info, 0, sizeof process_info);
+		memset(&startup_info, 0, sizeof startup_info);
+		startup_info.cb = sizeof startup_info;
+		startup_info.hStdInput = stdin_pipe.producer.get();
+		startup_info.hStdOutput = stdout_pipe.consumer.get();
+		startup_info.hStdError = stderr_pipe.consumer.get();
+		if(open_stdin || open_stdout || open_stderr)
+			startup_info.dwFlags |= STARTF_USESTDHANDLES;
+		
+		std::wstring application_name = executable_file.native();
+		auto&& arguments = wrapped_arguments.args;
+		// TODO: a proper joining function
+		std::wstring command_line = std::accumulate(arguments.begin(), arguments.end(), std::wstring(), [](std::wstring lhs, std::wstring rhs)
+		{
+			return lhs + L" " + rhs;
+		});
+		DWORD creation_flags = 0;
+		creation_flags |= is_set(fl, suspended) ? DEBUG_PROCESS : 0;
+		//CreateProcess(NULL, process_command.empty()?NULL:&process_command[0], NULL, NULL, TRUE, 0,
+                                //NULL, path.empty()?NULL:path.c_str(), &startup_info, &process_info);
+		BOOL success = CreateProcessW(
+			&application_name[0],
+			&command_line[0],
+			nullptr,
+			nullptr,
+			TRUE,
+			creation_flags,
+			nullptr,
+			nullptr,
+			&startup_info,
+			&process_info);
+		
+		i.reset(new impl());
+		i->stdin_fd = std::move(stdin_pipe.consumer);
+		i->stdout_fd = std::move(stdout_pipe.producer);
+		i->stderr_fd = std::move(stderr_pipe.producer);
+		i->process_handle.reset(process_info.hProcess);
+		i->process_id = process_info.dwProcessId;
+		unique_handle<windows_process_handle_policy> thread_handle(process_info.hThread);
+		
+		auto reader = [](std::function<void(boost::string_ref)> reader, HANDLE fd)
+		{
+			std::vector<char> buffer(4096);
+			DWORD n;
+			while(true)
+			{
+				BOOL success = ReadFile(fd, buffer.data(), buffer.size(), &n, nullptr);
+				if(!success || n == 0)
+					break;
+				reader(boost::string_ref(buffer.data(), static_cast<size_t>(n)));
+			}
+		};
+		if(stdout_handler.which() == 1)
+			i->stdout_reader = std::thread(reader, boost::strict_get<stream_consumer>(stdout_handler), i->stdout_fd.get());
+		if(stderr_handler.which() == 1)
+			i->stderr_reader = std::thread(reader, boost::strict_get<stream_consumer>(stderr_handler), i->stderr_fd.get());
 	}
 	
 	void process::close_stdin()
 	{
-		
+		std::lock_guard<std::mutex> lock(i->stdin_mutex);
+		i->stdin_fd.reset();
 	}
 	
 	bool process::write(boost::string_ref input)
 	{
-		
+		std::lock_guard<std::mutex> lock(i->stdin_mutex);
+		DWORD written;
+		BOOL success = WriteFile(i->stdin_fd.get(), input.data(), input.size(), &written, nullptr);
+		// TODO: check correctness
+		if(!success || written == 0)
+		{
+			const DWORD err = GetLastError();
+			if(err == EBADF)
+				throw pipe_closed("stdin is closed");
+			return false;
+		}
+		return true;
 	}
 	
 	bool process::is_finished()
 	{
-		
+		DWORD exit_status;
+		WaitForSingleObject(i->process_handle.get(), 0);
+		if(!GetExitCodeProcess(i->process_handle.get(), &exit_status))
+			return false;
+		i->exit_status = static_cast<int>(exit_status);
+		return true;
 	}
 	
 	void process::suspend()
 	{
-		
+		DebugActiveProcess(i->process_id);
 	}
 	
 	void process::resume()
 	{
-		
+		DebugActiveProcessStop(i->process_id);
 	}
 	
 	boost::optional<int> process::get_exit_status()
 	{
-		
+		if(is_finished())
+			return i->exit_status;
+		return boost::none;
 	}
 	
 	void process::kill(kill_brutality br)
 	{
-		
+		// Based on http://stackoverflow.com/a/1173396
+		std::lock_guard<std::mutex> lock(i->close_mutex);
+		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if(snapshot)
+		{
+			PROCESSENTRY32 process;
+			memset(&process, 0, sizeof process);
+			process.dwSize = sizeof process;
+			if(Process32First(snapshot, &process))
+			{
+				do
+				{
+					if(process.th32ParentProcessID == i->process_id)
+					{
+						HANDLE process_handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, process.th32ProcessID);
+						if(process_handle)
+							TerminateProcess(process_handle, 2);
+					}
+				} while(Process32Next(snapshot, &process));
+			}
+		}
+		TerminateProcess(i->process_handle.get(), 2);
 	}
 	
 	void process::wait()
 	{
-		
+		WaitForSingleObject(i->process_handle.get(), INFINITE);
 	}
 	
 	process::native_handle_type process::native_handle()
