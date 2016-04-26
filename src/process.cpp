@@ -293,8 +293,8 @@ namespace yet_another_process_library
 	process::process(
 		boost::filesystem::path executable_file,
 		native_args wrapped_arguments,
-		std::function<void(boost::string_ref)> stdout_handler,
-		std::function<void(boost::string_ref)> stderr_handler,
+		boost::variant<stdout, stream_consumer> stdout_handler,
+		boost::variant<stderr, stream_consumer> stderr_handler,
 		const flags fl)
 	{
 		pipe stdin_pipe;
@@ -302,12 +302,14 @@ namespace yet_another_process_library
 		pipe stderr_pipe;
 		
 		const bool open_stdin = !is_set(fl, stdin_closed);
+		const bool open_stdout = stdout_handler.which() != 0;
+		const bool open_stderr = stderr_handler.which() != 0;
 		
 		if(open_stdin)
 			stdin_pipe = create_pipe();
-		if(stdout_handler)
+		if(open_stdout)
 			stdout_pipe = create_pipe();
-		if(stderr_handler)
+		if(open_stderr)
 			stderr_pipe = create_pipe();
 		
 		native_handle_type pid = fork();
@@ -321,12 +323,12 @@ namespace yet_another_process_library
 				dup2(stdin_pipe.producer.get(), 0);
 				stdin_pipe.consumer.reset();
 			}
-			if(stdout_handler)
+			if(open_stdout)
 			{
 				dup2(stdout_pipe.consumer.get(), 1);
 				stdout_pipe.producer.reset();
 			}
-			if(stderr_handler)
+			if(open_stderr)
 			{
 				dup2(stderr_pipe.consumer.get(), 2);
 				stderr_pipe.producer.reset();
@@ -396,10 +398,10 @@ namespace yet_another_process_library
 				reader(boost::string_ref(buffer.data(), static_cast<size_t>(n)));
 			}
 		};
-		if(stdout_handler)
-			i->stdout_reader = std::thread(reader, stdout_handler, i->stdout_fd.get());
-		if(stderr_handler)
-			i->stderr_reader = std::thread(reader, stderr_handler, i->stderr_fd.get());
+		if(stdout_handler.which() == 1)
+			i->stdout_reader = std::thread(reader, boost::strict_get<stream_consumer>(stdout_handler), i->stdout_fd.get());
+		if(stderr_handler.which() == 1)
+			i->stderr_reader = std::thread(reader, boost::strict_get<stream_consumer>(stderr_handler), i->stderr_fd.get());
 	}
 	
 	void process::close_stdin()

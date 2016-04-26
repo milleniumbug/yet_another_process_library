@@ -12,7 +12,7 @@ int main()
 	{
 		ss << s;
 		ss.flush();
-	}, nullptr, yapl::process::search_path_env | yapl::process::suspended);
+	}, yapl::stderr::closed, yapl::search_path_env | yapl::suspended);
 	boost::string_ref data = "hello world!\n";
 	p.write(data);
 	p.close_stdin();

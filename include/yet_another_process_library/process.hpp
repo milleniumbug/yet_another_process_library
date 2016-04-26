@@ -5,6 +5,7 @@
 #include <boost/utility/string_ref.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
+#include <boost/variant.hpp>
 #include <memory>
 #include <iterator>
 #include <vector>
@@ -58,6 +59,16 @@ namespace yet_another_process_library
 	native_args make_native_args(native_args::underlying_range r);
 	native_args make_ascii_args(std::vector<std::string> args);
 	
+	enum class stdout
+	{
+		closed,
+	};
+	
+	enum class stderr
+	{
+		closed,
+	};
+	
 	class process
 	{
 	private:
@@ -65,10 +76,7 @@ namespace yet_another_process_library
 		std::unique_ptr<impl> i;
 	public:
 		typedef unsigned long long flags;
-		static const flags suspended = (1ULL << 0);
-		static const flags stdin_closed = (1ULL << 1);
-		static const flags search_path_env = (1ULL << 2);
-		
+		typedef std::function<void(boost::string_ref)> stream_consumer;
 		enum kill_brutality : unsigned int
 		{
 			force,
@@ -82,8 +90,8 @@ namespace yet_another_process_library
 		process(
 			boost::filesystem::path executable_file,
 			native_args arguments,
-			std::function<void(boost::string_ref)> stdout_handler = nullptr,
-			std::function<void(boost::string_ref)> stderr_handler = nullptr,
+			boost::variant<stdout, stream_consumer> stdout_handler,
+			boost::variant<stderr, stream_consumer> stderr_handler,
 			flags fl = static_cast<flags>(0));
 		
 		void close_stdin();
@@ -103,6 +111,10 @@ namespace yet_another_process_library
 		process(const process&) = delete;
 		process& operator=(const process&) = delete;
 	};
+	
+	static const process::flags suspended = (1ULL << 0);
+	static const process::flags stdin_closed = (1ULL << 1);
+	static const process::flags search_path_env = (1ULL << 2);
 }
 
 #endif

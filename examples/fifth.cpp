@@ -12,7 +12,7 @@ int main()
 	{
 		ss << s;
 		ss.flush();
-	}, nullptr, yapl::process::search_path_env);
+	}, yapl::stderr::closed, yapl::search_path_env);
 	p.write("echo Hello world\n");
 	p.write("exit\n");
 	p.wait();
