@@ -8,7 +8,7 @@ int main()
 {
 	using namespace yet_another_process_library;
 	std::stringstream ss;
-	process p("cat", [&](boost::string_ref s)
+	process p("cat", make_native_args({}), [&](boost::string_ref s)
 	{
 		ss << s;
 		ss.flush();

@@ -90,14 +90,36 @@ namespace yet_another_process_library
 		kill(process::ask);
 	}
 	
-	process::process(
-		boost::filesystem::path executable_file,
-		std::function<void(boost::string_ref)> stdout_handler,
-		std::function<void(boost::string_ref)> stderr_handler,
-		const flags fl) :
-		process(executable_file, std::vector<std::string>(), stdout_handler, stderr_handler, fl)
+	struct contains_a_non_ascii_letter
 	{
-		
+		template<typename ForwardRange>
+		bool operator()(ForwardRange x) const
+		{
+			using std::begin;
+			using std::end;
+			return std::any_of(begin(x), end(x), [](decltype(*begin(x)) c)
+			{
+				return c < 0 || c > 127;
+			});
+		}
+	};
+	
+	native_args make_native_args(native_args::underlying_range r)
+	{
+		return native_args(std::move(r), native_args::avoid_copy_constructor_ambiguity());
+	}
+	
+	native_args make_ascii_args(std::vector<std::string> args)
+	{
+		if(std::any_of(args.begin(), args.end(), contains_a_non_ascii_letter()))
+			throw invalid_encoding("non-ASCII character passed");
+		native_args::underlying_range underlying;
+		underlying.reserve(args.size());
+		std::transform(begin(args), end(args), std::back_inserter(underlying), [](const std::string& a)
+		{
+			return std::basic_string<native_args::native_char_type>(a.begin(), a.end());
+		});
+		return make_native_args(underlying);
 	}
 }
 
@@ -128,12 +150,19 @@ namespace yet_another_process_library
 	
 	struct process::impl
 	{
+		std::mutex stdin_mutex;
+		std::thread stdout_reader;
+		std::thread stderr_reader;
 		unique_handle<windows_process_handle_policy> process_handle;
+		unique_handle<windows_process_handle_policy> stdin_fd;
+		unique_handle<windows_process_handle_policy> stdout_fd;
+		unique_handle<windows_process_handle_policy> stderr_fd;
+		int exit_status = -1;
 	};
 	
 	process::process(
 		boost::filesystem::path executable_file,
-		std::vector<std::wstring> arguments,
+		native_args wrapped_arguments,
 		std::function<void(boost::string_ref)> stdout_handler,
 		std::function<void(boost::string_ref)> stderr_handler,
 		const flags fl)
@@ -141,22 +170,27 @@ namespace yet_another_process_library
 		
 	}
 	
-	process::process(
-		boost::filesystem::path executable_file,
-		std::vector<std::string> arguments,
-		std::function<void(boost::string_ref)> stdout_handler,
-		std::function<void(boost::string_ref)> stderr_handler,
-		const flags fl)
+	void process::close_stdin()
 	{
 		
 	}
 	
-	void process::write(boost::string_ref input)
+	bool process::write(boost::string_ref input)
 	{
 		
 	}
 	
 	bool process::is_finished()
+	{
+		
+	}
+	
+	void process::suspend()
+	{
+		
+	}
+	
+	void process::resume()
 	{
 		
 	}
@@ -178,8 +212,21 @@ namespace yet_another_process_library
 	
 	process::native_handle_type process::native_handle()
 	{
-		
+		return i->process_handle.get();
 	}
+	
+	process::~process()
+	{
+		if(!is_finished())
+			std::terminate();
+		if(i->stdout_reader.joinable())
+			i->stdout_reader.join();
+		if(i->stderr_reader.joinable())
+			i->stderr_reader.join();
+	}
+	
+	process::process(process&&) = default;
+	process& process::operator=(process&&) = default;
 	
 }
 #else
@@ -245,17 +292,7 @@ namespace yet_another_process_library
 	
 	process::process(
 		boost::filesystem::path executable_file,
-		std::vector<std::wstring> arguments,
-		std::function<void(boost::string_ref)> stdout_handler,
-		std::function<void(boost::string_ref)> stderr_handler,
-		const flags fl)
-	{
-		
-	}
-	
-	process::process(
-		boost::filesystem::path executable_file,
-		std::vector<std::string> arguments,
+		native_args wrapped_arguments,
 		std::function<void(boost::string_ref)> stdout_handler,
 		std::function<void(boost::string_ref)> stderr_handler,
 		const flags fl)
@@ -318,6 +355,7 @@ namespace yet_another_process_library
 			
 			std::string arg0 = executable_file.stem().native();
 			std::vector<char*> raw_args;
+			auto&& arguments = wrapped_arguments.args;
 			raw_args.reserve(arguments.size()+2);
 			raw_args.push_back(&arg0[0]);
 			std::transform(arguments.begin(), arguments.end(), std::back_inserter(raw_args), [](std::string& s)

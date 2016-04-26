@@ -6,7 +6,10 @@
 #include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 #include <memory>
+#include <iterator>
 #include <vector>
+#include <string>
+#include <type_traits>
 #include <stdexcept>
 
 namespace yet_another_process_library
@@ -22,6 +25,38 @@ namespace yet_another_process_library
 		pipe_closed(const char* what) : std::runtime_error(what) {}
 		pipe_closed(const std::string& what) : std::runtime_error(what) {}
 	};
+	
+	struct invalid_encoding : public std::invalid_argument
+	{
+		invalid_encoding(const char* what) : std::invalid_argument(what) {}
+		invalid_encoding(const std::string& what) : std::invalid_argument(what) {}
+	};
+	
+	class native_args
+	{
+	public:
+#if defined(_WIN32)
+		typedef wchar_t native_char_type;
+#else
+		typedef char native_char_type;
+#endif
+		typedef std::vector<std::basic_string<native_char_type>> underlying_range;
+	private:
+		struct avoid_copy_constructor_ambiguity {};
+		underlying_range args;
+		
+		template<typename T>
+		native_args(T&& a, avoid_copy_constructor_ambiguity) :
+			args(std::forward<T>(a))
+		{
+			
+		}
+		friend class process;
+		friend native_args make_native_args(underlying_range r);
+	};
+	
+	native_args make_native_args(native_args::underlying_range r);
+	native_args make_ascii_args(std::vector<std::string> args);
 	
 	class process
 	{
@@ -44,23 +79,9 @@ namespace yet_another_process_library
 #else
 		typedef int native_handle_type;
 #endif
-		
 		process(
 			boost::filesystem::path executable_file,
-			std::function<void(boost::string_ref)> stdout_handler = nullptr,
-			std::function<void(boost::string_ref)> stderr_handler = nullptr,
-			flags fl = static_cast<flags>(0));
-		
-		process(
-			boost::filesystem::path executable_file,
-			std::vector<std::string> arguments,
-			std::function<void(boost::string_ref)> stdout_handler = nullptr,
-			std::function<void(boost::string_ref)> stderr_handler = nullptr,
-			flags fl = static_cast<flags>(0));
-		
-		process(
-			boost::filesystem::path executable_file,
-			std::vector<std::wstring> arguments,
+			native_args arguments,
 			std::function<void(boost::string_ref)> stdout_handler = nullptr,
 			std::function<void(boost::string_ref)> stderr_handler = nullptr,
 			flags fl = static_cast<flags>(0));
