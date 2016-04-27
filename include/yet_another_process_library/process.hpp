@@ -59,14 +59,14 @@ namespace yet_another_process_library
 	native_args make_native_args(native_args::underlying_range r);
 	native_args make_ascii_args(std::vector<std::string> args);
 	
-	enum class stdout
+	enum stdout_flags : unsigned int
 	{
-		closed,
+		stdout_closed,
 	};
 	
-	enum class stderr
+	enum stderr_flags : unsigned int
 	{
-		closed,
+		stderr_closed,
 	};
 	
 	class process
@@ -90,8 +90,8 @@ namespace yet_another_process_library
 		process(
 			boost::filesystem::path executable_file,
 			native_args arguments,
-			boost::variant<stdout, stream_consumer> stdout_handler,
-			boost::variant<stderr, stream_consumer> stderr_handler,
+			boost::variant<stdout_flags, stream_consumer> stdout_flags_handler,
+			boost::variant<stderr_flags, stream_consumer> stderr_handler,
 			flags fl = static_cast<flags>(0));
 		
 		void close_stdin();

@@ -259,8 +259,8 @@ namespace yet_another_process_library
 	process::process(
 		boost::filesystem::path executable_file,
 		native_args wrapped_arguments,
-		boost::variant<stdout, stream_consumer> stdout_handler,
-		boost::variant<stderr, stream_consumer> stderr_handler,
+		boost::variant<stdout_flags, stream_consumer> stdout_handler,
+		boost::variant<stderr_flags, stream_consumer> stderr_handler,
 		const flags fl)
 	{
 		pipe stdin_pipe;
@@ -436,8 +436,8 @@ namespace yet_another_process_library
 	
 	process::~process()
 	{
-		if(!is_finished())
-			std::terminate();
+		/*if(!is_finished())
+			std::terminate();*/
 		if(i->stdout_reader.joinable())
 			i->stdout_reader.join();
 		if(i->stderr_reader.joinable())
@@ -512,8 +512,8 @@ namespace yet_another_process_library
 	process::process(
 		boost::filesystem::path executable_file,
 		native_args wrapped_arguments,
-		boost::variant<stdout, stream_consumer> stdout_handler,
-		boost::variant<stderr, stream_consumer> stderr_handler,
+		boost::variant<stdout_flags, stream_consumer> stdout_handler,
+		boost::variant<stderr_flags, stream_consumer> stderr_handler,
 		const flags fl)
 	{
 		pipe stdin_pipe;

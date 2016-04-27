@@ -14,7 +14,7 @@ int main()
 		yapl::process p("which", yapl::make_ascii_args({ "długa nazwa programu" }), [](boost::string_ref s)
 		{
 			std::cout << s << "\n";
-		}, yapl::stderr::closed, yapl::stdin_closed | yapl::search_path_env);
+		}, yapl::stderr_closed, yapl::stdin_closed | yapl::search_path_env);
 		p.wait();
 		assert(false);
 	}

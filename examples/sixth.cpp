@@ -9,8 +9,8 @@ int main()
 	yapl::process p(
 		"/nonexisting_executable",
 		yapl::make_native_args({}),
-		yapl::stdout::closed,
-		yapl::stderr::closed);
+		yapl::stdout_closed,
+		yapl::stderr_closed);
 	assert(p.get_exit_status() == boost::none);
 	std::this_thread::sleep_for(std::chrono::milliseconds(15));
 	std::cout << p.get_exit_status().value() << "\n";

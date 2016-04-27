@@ -9,8 +9,8 @@ int main()
 	yapl::process p(
 		"sleep",
 		yapl::make_ascii_args({ "1" }),
-		yapl::stdout::closed,
-		yapl::stderr::closed,
+		yapl::stdout_closed,
+		yapl::stderr_closed,
 		yapl::stdin_closed | yapl::search_path_env);
 	std::this_thread::sleep_for(std::chrono::milliseconds(15));
 	assert(p.get_exit_status() == boost::none);

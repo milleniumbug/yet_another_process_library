@@ -19,7 +19,7 @@ int main()
 	{
 		ss << s;
 		ss.flush();
-	}, yapl::stderr::closed, yapl::stdin_closed);
+	}, yapl::stderr_closed, yapl::stdin_closed);
 	p.wait();
 	std::string expected = expected_data();
 	std::string actual = ss.str();
