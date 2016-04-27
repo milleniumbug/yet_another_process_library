@@ -2,10 +2,12 @@
 #include <thread>
 #include <cassert>
 #include <sstream>
+#include <boost/algorithm/string/replace.hpp>
 #include <yet_another_process_library/process.hpp>
 
 boost::filesystem::path get_current_process_path();
 boost::filesystem::path program_component();
+std::string expected_data();
 
 int main()
 {
@@ -19,16 +21,9 @@ int main()
 		ss.flush();
 	}, yapl::stderr::closed, yapl::stdin_closed);
 	p.wait();
-	std::string expected =
-R"*****(_arg_tester%ENDOFARGUMENT%
-first"_arg%ENDOFARGUMENT%
-second argument%ENDOFARGUMENT%
-some ' special chars $@!~`
-%ENDOFARGUMENT%
-last, for good measure%ENDOFARGUMENT%
-and a quote "%ENDOFARGUMENT%
-)*****";
+	std::string expected = expected_data();
 	std::string actual = ss.str();
+	boost::algorithm::replace_all(actual, "\r\n", "\n");
 	assert(actual == expected);
 	std::cout << actual;
 }
@@ -56,6 +51,18 @@ boost::filesystem::path program_component()
 	return L"_arg_tester.exe";
 }
 
+std::string expected_data()
+{
+	return
+R"*****(_arg_tester.exe%ENDOFARGUMENT%
+first"_arg%ENDOFARGUMENT%
+second argument%ENDOFARGUMENT%
+some ' special chars $@!~`
+%ENDOFARGUMENT%
+last, for good measure%ENDOFARGUMENT%
+and a quote "%ENDOFARGUMENT%
+)*****";
+}
 #else
 #include <unistd.h>
 
@@ -77,5 +84,18 @@ boost::filesystem::path get_current_process_path()
 boost::filesystem::path program_component()
 {
 	return "_arg_tester";	
+}
+
+std::string expected_data()
+{
+	return
+R"*****(_arg_tester%ENDOFARGUMENT%
+first"_arg%ENDOFARGUMENT%
+second argument%ENDOFARGUMENT%
+some ' special chars $@!~`
+%ENDOFARGUMENT%
+last, for good measure%ENDOFARGUMENT%
+and a quote "%ENDOFARGUMENT%
+)*****";
 }
 #endif

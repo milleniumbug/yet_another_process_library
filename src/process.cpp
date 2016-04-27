@@ -4,6 +4,7 @@
 #include <exception>
 #include <iterator>
 #include <numeric>
+#include <boost/algorithm/string/replace.hpp>
 #include <yet_another_process_library/process.hpp>
 
 #define STRINGIFY1(x) #x
@@ -199,6 +200,62 @@ namespace yet_another_process_library
 		int exit_status = -1;
 	};
 	
+	// adapted from https://blogs.msdn.microsoft.com/twistylittlepassagesallalike/2011/04/23/everyone-quotes-command-line-arguments-the-wrong-way/
+	std::wstring arg_quote(const std::wstring& Argument, bool Force)
+	{
+		std::wstring CommandLine;
+		// Unless we're told otherwise, don't quote unless we actually
+		// need to do so --- hopefully avoid problems if programs won't
+		// parse quotes properly
+		if(
+			!Force &&
+			!Argument.empty() &&
+			Argument.find_first_of(L" \t\n\v\"") == Argument.npos)
+		{
+			CommandLine.append(Argument);
+		}
+		else
+		{
+			CommandLine.push_back(L'"');
+			for(auto It = Argument.begin(); true; ++It) {
+				unsigned NumberBackslashes = 0;
+				while(It != Argument.end() && *It == L'\\')
+				{
+					++It;
+					++NumberBackslashes;
+				}
+				if(It == Argument.end())
+				{
+					// Escape all backslashes, but let the terminating
+					// double quotation mark we add below be interpreted
+					// as a metacharacter.
+					CommandLine.append(NumberBackslashes * 2, L'\\');
+					break;
+				}
+				else if (*It == L'"')
+				{
+					// Escape all backslashes and the following
+					// double quotation mark.
+					CommandLine.append(NumberBackslashes * 2 + 1, L'\\');
+					CommandLine.push_back(*It);
+				}
+				else
+				{
+					// Backslashes aren't special here.
+					CommandLine.append(NumberBackslashes, L'\\');
+					CommandLine.push_back(*It);
+				}
+			}
+			CommandLine.push_back(L'"');
+		}
+		return CommandLine;
+	}
+	
+	std::wstring arg_quote(const std::wstring& Argument)
+	{
+		return arg_quote(Argument, false);
+	}
+	
 	process::process(
 		boost::filesystem::path executable_file,
 		native_args wrapped_arguments,
@@ -244,7 +301,9 @@ namespace yet_another_process_library
 		std::wstring application_name = executable_file.native();
 		auto&& arguments = wrapped_arguments.args;
 		// TODO: a proper joining function
-		std::wstring command_line = std::accumulate(arguments.begin(), arguments.end(), std::wstring(), [](std::wstring lhs, std::wstring rhs)
+		std::wstring first_arg = arg_quote(executable_file.filename().native());
+		std::transform(arguments.begin(), arguments.end(), arguments.begin(), [](const std::wstring& w){ return arg_quote(w); });
+		std::wstring command_line = std::accumulate(arguments.begin(), arguments.end(), first_arg, [](std::wstring lhs, std::wstring rhs)
 		{
 			return lhs + L" " + rhs;
 		});
