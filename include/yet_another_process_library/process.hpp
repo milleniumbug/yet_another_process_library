@@ -90,7 +90,7 @@ namespace yet_another_process_library
 		process(
 			boost::filesystem::path executable_file,
 			native_args arguments,
-			boost::variant<stdout_flags, stream_consumer> stdout_flags_handler,
+			boost::variant<stdout_flags, stream_consumer> stdout_handler,
 			boost::variant<stderr_flags, stream_consumer> stderr_handler,
 			flags fl = static_cast<flags>(0));
 		
